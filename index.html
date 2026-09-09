@@ -163,21 +163,22 @@
   const iframe = document.getElementById('player');
   const errorMsg = document.getElementById('errorMsg');
 
-  function extractVideoId(raw) {
-    let text = raw.trim();
-    if (!text) return null;
+  function parseYoutubeUrl(url) {
+    const host = url.hostname.replace(/^www\./, '').replace(/^m\./, '');
 
-    // If it's just a bare 11-char video ID, accept it directly.
-    if (/^[a-zA-Z0-9_-]{11}$/.test(text)) return text;
-
-    let url;
-    try {
-      url = new URL(text.includes('://') ? text : 'https://' + text);
-    } catch {
+    // Google search results often wrap the real link in a redirect URL
+    // like google.com/url?q=<encoded real link>&sa=...
+    if (host.endsWith('google.com') && url.pathname === '/url') {
+      const inner = url.searchParams.get('q') || url.searchParams.get('url');
+      if (inner) {
+        try {
+          return parseYoutubeUrl(new URL(inner));
+        } catch {
+          return null;
+        }
+      }
       return null;
     }
-
-    const host = url.hostname.replace(/^www\./, '').replace(/^m\./, '');
 
     if (host === 'youtu.be') {
       const id = url.pathname.split('/').filter(Boolean)[0];
@@ -198,6 +199,28 @@
     }
 
     return null;
+  }
+
+  function extractVideoId(raw) {
+    let text = raw.trim();
+    if (!text) return null;
+
+    // If it's just a bare 11-char video ID, accept it directly.
+    if (/^[a-zA-Z0-9_-]{11}$/.test(text)) return text;
+
+    // If extra text got pasted alongside the link (e.g. a title copied
+    // together with it), pull out just the first URL-looking chunk.
+    const urlMatch = text.match(/https?:\/\/\S+/);
+    if (urlMatch) text = urlMatch[0];
+
+    let url;
+    try {
+      url = new URL(text.includes('://') ? text : 'https://' + text);
+    } catch {
+      return null;
+    }
+
+    return parseYoutubeUrl(url);
   }
 
   function playVideo(videoId) {
