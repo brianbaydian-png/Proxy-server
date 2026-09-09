@@ -79,6 +79,10 @@
   }
   button:hover { background: var(--accent-hover); }
   button:active { transform: translateY(1px); }
+  button:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
 
   .player-wrap {
     margin-top: 20px;
@@ -135,7 +139,7 @@
 <div class="card">
   <form id="playerForm">
     <input type="text" id="urlInput" placeholder="https://www.youtube.com/watch?v=..." autocomplete="off" autofocus>
-    <button type="submit">Play</button>
+    <button type="submit" id="playButton">Play</button>
   </form>
 
   <div class="error" id="errorMsg">Couldn't find a valid YouTube video in that link. Try pasting a normal youtube.com or youtu.be URL.</div>
@@ -230,16 +234,71 @@
     wrap.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
-  form.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const videoId = extractVideoId(input.value);
+  function showError(message) {
+    errorMsg.textContent = message;
+    errorMsg.classList.add('visible');
+    wrap.classList.remove('visible');
+    iframe.src = '';
+  }
+
+  const DEFAULT_ERROR = "Couldn't find a valid YouTube video in that link. Try pasting a normal youtube.com or youtu.be URL.";
+
+  // Some share links (e.g. Google's "goto?url=" tracking links) don't
+  // contain the real URL at all -- only Google's server knows where they
+  // point. Ask a redirect-following proxy to chase the link and hand back
+  // wherever it actually lands.
+  async function resolveRedirect(url) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+      const resp = await fetch(
+        `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
+        { signal: controller.signal }
+      );
+      if (!resp.ok) return null;
+      const data = await resp.json();
+      return data?.status?.url || null;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  async function handleLink(raw) {
+    const videoId = extractVideoId(raw);
     if (videoId) {
       playVideo(videoId);
-    } else {
-      errorMsg.classList.add('visible');
-      wrap.classList.remove('visible');
-      iframe.src = '';
+      return;
     }
+
+    const urlMatch = raw.trim().match(/https?:\/\/\S+/);
+    if (!urlMatch) {
+      showError(DEFAULT_ERROR);
+      return;
+    }
+
+    playButton.disabled = true;
+    playButton.textContent = 'Resolving…';
+    try {
+      const finalUrl = await resolveRedirect(urlMatch[0]);
+      const resolvedId = finalUrl ? extractVideoId(finalUrl) : null;
+      if (resolvedId) {
+        playVideo(resolvedId);
+      } else {
+        showError("That link doesn't lead to a YouTube video I could find. Try opening it first and copying the youtube.com link from the address bar.");
+      }
+    } finally {
+      playButton.disabled = false;
+      playButton.textContent = 'Play';
+    }
+  }
+
+  const playButton = document.getElementById('playButton');
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    handleLink(input.value);
   });
 
   // Support pasting a link with ?v= straight into the URL bar of this page, e.g. ?url=...
@@ -247,8 +306,7 @@
   const preset = params.get('url') || params.get('v');
   if (preset) {
     input.value = preset;
-    const videoId = extractVideoId(preset);
-    if (videoId) playVideo(videoId);
+    handleLink(preset);
   }
 </script>
 
